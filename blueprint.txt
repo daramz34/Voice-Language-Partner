@@ -1,0 +1,101 @@
+User
+├── id
+├── username (unique)
+├── email (unique)
+├── hashed_password
+├── native_language (SupportedLanguage)
+├── created_at
+
+PracticeSession
+├── id
+├── user_id (FK → User)
+├── target_language (SupportedLanguage)
+├── support_language (SupportedLanguage)
+├── conversation_config (ConversationConfig)
+├── practice_mode (PracticeMode)
+├── proficiency_level (ProficiencyLevel)
+├── scenario_type (ScenarioType, nullable)
+├── topic (String, nullable)
+├── status (SessionStatus, default=active)
+├── assemblyai_agent_id (String, nullable)
+├── started_at
+├── ended_at (nullable)
+├── duration_seconds (int, nullable)
+
+ConversationMessage
+├── id
+├── session_id (FK → PracticeSession)
+├── speaker (enum: user, agent)
+├── content (Text)
+├── language (SupportedLanguage)
+├── timestamp
+
+SessionEvaluation
+├── id
+├── session_id (FK → PracticeSession, unique)
+├── overall_score (Float)
+├── grammar_score (Float)
+├── vocabulary_score (Float)
+├── fluency_score (Float)
+├── comprehension_score (Float)
+├── pronunciation_score (Float, nullable)
+├── target_language_percentage (Float)
+├── feedback (Text — JSON)
+├── recommendations (Text)
+├── evaluated_at
+
+Mistake
+├── id
+├── session_id (FK → PracticeSession)
+├── user_id (FK → User)
+├── original_text (Text)
+├── corrected_text (Text)
+├── mistake_type (enum: grammar, vocabulary, fluency)
+├── explanation (Text)
+├── created_at
+
+UserProgress
+├── id
+├── user_id (FK → User)
+├── target_language (SupportedLanguage)
+├── sessions_count (int, default 0)
+├── total_practice_minutes (int, default 0)
+├── avg_overall_score (Float, default 0.0)
+├── avg_grammar_score (Float, default 0.0)
+├── avg_vocabulary_score (Float, default 0.0)
+├── avg_fluency_score (Float, default 0.0)
+├── best_score (Float, default 0.0)
+├── current_streak (int, default 0)
+├── longest_streak (int, default 0)
+├── last_practice_date (Date, nullable)
+├── updated_at
+
+
+
+AUTH:
+UserCreate     → username, email, password, native_language
+UserResponse   → id, username, email, native_language, created_at
+TokenResponse  → access_token, token_type
+
+SESSIONS:
+SessionCreate  → target_language, support_language, conversation_config,
+                 practice_mode, proficiency_level, scenario_type, topic
+SessionResponse → all fields
+SessionUpdate  → status, ended_at, duration_seconds
+
+MESSAGES:
+MessageCreate  → session_id, speaker, content, language
+MessageResponse → id, session_id, speaker, content, language, timestamp
+
+EVALUATION:
+EvaluationResponse → all score fields + feedback + recommendations
+
+MISTAKES:
+MistakeResponse → id, original_text, corrected_text, mistake_type, explanation
+
+PROGRESS:
+ProgressResponse → all progress fields per language
+
+AGENT CONFIG:
+AgentConfigRequest → session_id (used to build dynamic agent prompt)
+AgentConfigResponse → agent_id, config
