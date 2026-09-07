@@ -11,6 +11,10 @@ class Setting(BaseSettings):
     VERSION: str = "1.0.0"
 
 
-    model_conifg= SettingsConfigDict(env_file=Path(__file__).resolve().parent.parent / ".env")
+    ASSEMBLYAI_API_KEY: str
+    GEMINI_API_KEY: str
+
+
+    model_config= SettingsConfigDict(env_file=Path(__file__).resolve().parent.parent / ".env")
 
 settings = Setting()

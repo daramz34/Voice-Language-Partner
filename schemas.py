@@ -30,7 +30,7 @@ class SessionCreate(BaseModel):
     practice_mode: enums.PracticeMode
     proficiency_level: enums.ProficiencyLevel
     scenario_type: Optional[enums.ScenarioType] = None
-    topic: str
+    topic: Optional[str]
 
 
 
@@ -57,15 +57,10 @@ class SessionResponse(BaseModel):
 
 
 class SessionUpdate(BaseModel):
-    target_language : Optional[enums.SupportedLanguage] = None
-    support_language: Optional[enums.SupportedLanguage] = None
-    conversation_config: Optional[enums.ConversationConfig] = None
-    practice_mode: Optional[enums.PracticeMode] = None
-    proficiency_level: Optional[enums.ProficiencyLevel] = None
-    scenario_type: Optional[enums.ScenarioType] = None
-    topic: Optional[str] = None
+    status: enums.SessionStatus
     ended_at: Optional[datetime] = None
     duration_seconds: Optional[int] = None
+    assemblyai_agent_id: Optional[str] = None
 
 
 
