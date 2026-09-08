@@ -143,3 +143,12 @@ class AgentConfigResponse(BaseModel):
 
     
     
+class PaginatedResponse(BaseModel):
+    total: int
+    page: int
+    limit : int
+    results: list[SessionResponse]
+
+    model_config = ConfigDict(from_attributes=True)
+
+    

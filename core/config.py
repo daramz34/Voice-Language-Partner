@@ -13,8 +13,9 @@ class Setting(BaseSettings):
 
     ASSEMBLYAI_API_KEY: str
     GEMINI_API_KEY: str
+    GEMINI_MODEL: str = "gemini-2.5-flash" 
 
 
-    model_config= SettingsConfigDict(env_file=Path(__file__).resolve().parent.parent / ".env")
+    model_config= SettingsConfigDict(env_file=Path(__file__).resolve().parent.parent / ".env", extra="ignore",)
 
 settings = Setting()

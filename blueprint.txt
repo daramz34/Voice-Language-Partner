@@ -99,3 +99,88 @@ ProgressResponse → all progress fields per language
 AGENT CONFIG:
 AgentConfigRequest → session_id (used to build dynamic agent prompt)
 AgentConfigResponse → agent_id, config
+
+
+
+USER:
+get_user_by_username(db, username) → User | None
+get_user_by_email(db, email) → User | None
+create_user(db, user: UserCreate) → User
+authenticate_user(db, username, password) → User | None
+
+SESSIONS:
+create_session(db, session: SessionCreate, current_user: User) → PracticeSession
+    → creates session record
+    → creates/updates UserProgress record for that language
+    → returns session
+
+get_my_sessions(db, current_user, page, limit) → dict (paginated)
+get_session_by_id(db, session_id, current_user) → PracticeSession | None
+update_session(db, session_id, update: SessionUpdate, current_user) → PracticeSession | None
+    → used to end session (status=completed, ended_at, duration_seconds)
+
+MESSAGES:
+save_message(db, message: MessageCreate) → ConversationMessage
+get_session_transcript(db, session_id, current_user) → list[ConversationMessage]
+
+EVALUATION:
+create_evaluation(db, session_id, evaluation_data: dict) → SessionEvaluation
+    → saves all scores and feedback
+    → updates UserProgress averages
+    → updates streak
+get_session_evaluation(db, session_id, current_user) → SessionEvaluation | None
+
+MISTAKES:
+save_mistakes(db, session_id, user_id, mistakes: list[dict]) → list[Mistake]
+    → bulk insert all mistakes from one session
+get_my_mistakes(db, current_user, language=None) → list[Mistake]
+    → optionally filter by target language of session
+
+PROGRESS:
+get_or_create_progress(db, user_id, language: SupportedLanguage) → UserProgress
+    → if no record exists for this language, create one with all zeros
+
+get_my_progress(db, current_user) → list[UserProgress]
+    → returns progress for ALL languages user has practiced
+
+get_progress_by_language(db, current_user, language) → UserProgress | None
+
+update_progress(db, user_id, language, evaluation_data: dict) → UserProgress
+    → called after evaluation is saved
+    → updates:
+        sessions_count += 1
+        total_practice_minutes += session duration
+        recalculate avg scores (running average)
+        update best_score if new score is higher
+        update streak (same as medication tracker pattern)
+        update last_practice_date
+
+
+
+
+services/gemini.py:
+
+evaluate_session(transcript: list[dict], target_language, support_language,
+                 conversation_config, proficiency_level) -> dict
+    → analyzes full transcript
+    → returns scores for all categories
+    → returns list of mistakes with corrections
+    → returns personalized recommendations
+    → returns target language usage percentage
+
+generate_recommendations(mistakes: list, progress: dict) -> str
+    → looks at recurring weaknesses
+    → generates specific next practice suggestion
+
+services/agent.py:
+
+build_agent_config(session: PracticeSession) -> dict
+    → builds the JSONC agent config dynamically
+    → sets correct language for AI voice
+    → sets system prompt based on:
+        - practice mode (free/scenario/tutor)
+        - proficiency level (beginner/intermediate/advanced)
+        - scenario type (restaurant/airport/hotel etc)
+        - topic (if free conversation)
+        - conversation config (who speaks what language)
+    → returns config dict to publish to AssemblyAI
