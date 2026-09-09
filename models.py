@@ -40,7 +40,7 @@ class PracticeSession(Base):
     assemblyai_agent_id = Column(String, nullable=True)
     started_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     ended_at = Column(DateTime(timezone=True), nullable=True)
-    duration_seconds = Column(Integer, nullable=False)
+    duration_seconds = Column(Integer, nullable=False, default=0)
 
     user = relationship("User", back_populates="practice_sessions")
     messages = relationship("ConversationMessage", back_populates="session", cascade="all, delete-orphan")

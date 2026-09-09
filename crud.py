@@ -34,14 +34,11 @@ def create_user(db: Session, user:UserCreate):
 
 
 def create_session(db:Session, session: SessionCreate, current_user: User):
-
-    
-    
-    get_or_create_progress(db, current_user.id, session.target_language)
     db_session = PracticeSession(**session.model_dump(), user_id=current_user.id)
     db.add(db_session)
     db.commit()
     db.refresh(db_session)
+    get_or_create_progress(db, current_user.id, session.target_language)
     return db_session
 
 def get_my_sessions(db:Session, current_user: User, page: int= 1, limit: int=10):
@@ -85,7 +82,7 @@ def update_session(db:Session, session_id: int, update: SessionUpdate, current_u
 
 # Messages
 
-def save_message(db:Session, message: MessageCreate, current_user: User): # how will i use current_user here
+def save_message(db:Session, message: MessageCreate, current_user: User): 
 
     session = get_session_by_id(db, message.session_id, current_user)
     if not session:
@@ -166,19 +163,18 @@ def create_evaluation(db: Session,session_id: int,evaluation_data: dict, current
 
 def _coerce_mistake_type(value):
     """Turn 'grammar', 'GRAMMAR', or enum member into a proper MistakeType."""
-    if isinstance(value, enums.MistakeType):
+    if isinstance(value, enums.Mistake_Type):
         return value
 
     value_str = str(value)
-    for member in enums.MistakeType:
+    for member in enums.Mistake_Type:
         if member.value == value_str or member.name == value_str.upper():
             return member
 
     raise ValueError(f"Invalid mistake type: {value}")
 
 
-def save_mistakes(db: Session,session_id: int,user_id: int, mistakes: list[dict],
-) -> list[Mistake]:
+def save_mistakes(db: Session,session_id: int,user_id: int, mistakes: list[dict]) -> list[Mistake]:
     rows = [
         Mistake(
             session_id=session_id,
@@ -215,11 +211,7 @@ def get_my_mistakes(db: Session,current_user: User,language=None,) -> list[Mista
 
     return query.order_by(Mistake.created_at.desc()).all()
 
-def get_or_create_progress(
-    db: Session,
-    user_id: int,
-    language,
-) -> UserProgress:
+def get_or_create_progress(db: Session,user_id: int,language) -> UserProgress:
     """Find my chart for a language. If I don't have one, make a fresh empty one."""
     progress = (
         db.query(UserProgress)
@@ -247,6 +239,8 @@ def get_or_create_progress(
         longest_streak=0,
     )
     db.add(progress)
+    db.commit()
+    db.refresh(progress)
     return progress
 
 

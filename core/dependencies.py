@@ -11,13 +11,21 @@ oauth_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 def get_current_user(token: str =Depends(oauth_scheme), db:Session=Depends(get_db)):
     payload = verify_access_token(token)
-    if not payload:
+    if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
         )
+    
+    sub = payload.get("sub")
+    if sub is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+        )
 
-    user = db.query(User).filter(User.id == int(payload.get("sub"))).first()
+
+    user = db.query(User).filter(User.id == int(sub)).first()
 
 
     if not user:

@@ -43,7 +43,7 @@ class SessionResponse(BaseModel):
     practice_mode: enums.PracticeMode
     proficiency_level: enums.ProficiencyLevel
     scenario_type: Optional[enums.ScenarioType] = None
-    topic: str
+    topic: Optional[str] = None
     status: enums.SessionStatus
     assemblyai_agent_id: Optional[str] = None
     started_at : datetime
@@ -60,7 +60,7 @@ class SessionUpdate(BaseModel):
     status: enums.SessionStatus
     ended_at: Optional[datetime] = None
     duration_seconds: Optional[int] = None
-    assemblyai_agent_id: Optional[str] = None
+    
 
 
 
@@ -99,7 +99,12 @@ class EvaluationResponse(BaseModel):
     model_config= ConfigDict(from_attributes=True)
     
 
+class MessageIn(BaseModel):
+    speaker: enums.Speaker
+    content: str
+    language: enums.SupportedLanguage
 
+    
 class MistakeResponse(BaseModel):
     id: int
     session_id : int

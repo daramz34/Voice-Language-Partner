@@ -184,3 +184,33 @@ build_agent_config(session: PracticeSession) -> dict
         - topic (if free conversation)
         - conversation config (who speaks what language)
     → returns config dict to publish to AssemblyAI
+
+
+
+
+
+
+AUTH:
+POST /auth/register
+POST /auth/login
+GET  /auth/me
+
+LANGUAGES:
+GET /languages/supported      → list of 6 supported languages with voices
+
+SESSIONS:
+POST   /sessions/              → create session + build agent config
+GET    /sessions/              → my session history (paginated)
+GET    /sessions/{id}          → single session details
+PATCH  /sessions/{id}          → update status (end session)
+POST   /sessions/{id}/message  → save a message from conversation
+POST   /sessions/{id}/evaluate → trigger Gemini evaluation
+GET    /sessions/{id}/transcript → full conversation transcript
+
+PROGRESS:
+GET /progress/                   → my progress across all languages
+GET /progress/{language}         → progress for specific language
+
+MISTAKES:
+GET /mistakes/                   → all my mistakes (filterable by language)
+GET /mistakes/{language}         → mistakes for specific language

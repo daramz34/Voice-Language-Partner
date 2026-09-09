@@ -17,6 +17,11 @@ class _Mistake(BaseModel):
     corrected: str = ""
     type: str = "grammar"
     explanation: str = ""
+class _Feedback(BaseModel):
+    """Fixed keys — free Gemini API can't handle free-form dicts in schemas."""
+    grammar: str = ""
+    vocabulary: str = ""
+    fluency: str = ""
 
 
 class _EvaluationResult(BaseModel):
@@ -28,8 +33,10 @@ class _EvaluationResult(BaseModel):
     pronunciation_score: Optional[float] = None
     target_language_percentage: float = 0.0
     mistakes: List[_Mistake] = Field(default_factory=list)
-    feedback: Dict[str, str] = Field(default_factory=dict)
+    feedback: _Feedback = Field(default_factory=_Feedback)   # ← was Dict[str, str]
     recommendations: str = ""
+
+
 
 
 # ---------- helpers ----------
@@ -113,7 +120,7 @@ def evaluate_session(
             }
             for m in parsed.mistakes
         ],
-        "feedback": parsed.feedback,
+        "feedback": parsed.feedback.model_dump(),
         # create_evaluation's DB column is "recommendation" (singular)
         "recommendation": parsed.recommendations,
         "recommendations": parsed.recommendations,   # keep blueprint's plural key too
