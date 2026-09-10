@@ -53,8 +53,8 @@
     const sessionId = new URLSearchParams(window.location.search).get("id");
     if (!sessionId) window.location.href = "/setup.html";
 
-    let sessionLanguage = "spanish";   // set from the session record below
-    let lastAgentText = "";            // greeting dedupe
+    let sessionLanguage = "spanish";
+    const WIRE_RATE = 24000;
 
     const transcript = $("transcript");
     function addBubble(who, text) {
@@ -66,7 +66,6 @@
       transcript.appendChild(b);
       transcript.scrollTop = transcript.scrollHeight;
     }
-
     function fail(msg) {
       const e = $("practice-error");
       e.textContent = msg; e.hidden = false;
@@ -82,10 +81,9 @@
     let startTime = Date.now();
     let readyTimer = null;
     let sessionReady = false;
-    const WIRE_RATE = 24000;
+    let lastAgentText = "";
 
-    // Worklets from the official starter — capture resamples mic to 24kHz
-    // PCM16; playback is a ring buffer that resamples 24k to hardware rate.
+    // ---- worklets (from the official starter) ----
     const CAPTURE_WORKLET = `
       class CaptureProcessor extends AudioWorkletProcessor {
         constructor() {
@@ -192,7 +190,8 @@
           }
         }
         process(inputs, outputs) {
-          const out = outputs[0][0];
+          const output = outputs[0];
+          const out = output[0];
           const cap = this._ring.length;
           for (let i = 0; i < out.length; i++) {
             if (this._available > 0) {
@@ -204,15 +203,16 @@
               this._drained = true;
             }
           }
-          for (let ch = 1; ch < outputs[0].length; ch++) outputs[0][ch].set(out);
+          for (let ch = 1; ch < output.length; ch++) output[ch].set(out);
           return true;
         }
       }
       registerProcessor('playback', PlaybackProcessor);
     `;
 
+    const blobUrl = (code) => URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
     async function addWorklet(ctx, code, name) {
-      const url = URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
+      const url = blobUrl(code);
       try { await ctx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
       return new AudioWorkletNode(ctx, name);
     }
@@ -221,12 +221,20 @@
       try {
         $("start-btn").disabled = true; $("start-btn").textContent = "Connecting...";
         $("practice-error").hidden = true;
+        ended = false; sessionReady = false; lastAgentText = "";
 
+        // 1. token + mic
         const { token } = await API.voiceToken();
         mic = await navigator.mediaDevices.getUserMedia({
-          audio: { channelCount: 1, echoCancellation: true, noiseSuppression: false, autoGainControl: false }
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
         });
 
+        // two contexts, both created in the click handler (Safari requirement)
         captureCtx = new AudioContext({ sampleRate: WIRE_RATE });
         playbackCtx = new AudioContext({ sampleRate: WIRE_RATE });
         await Promise.all([captureCtx.resume(), playbackCtx.resume()]);
@@ -237,51 +245,62 @@
         capture = await addWorklet(captureCtx, CAPTURE_WORKLET, "capture");
         captureCtx.createMediaStreamSource(mic).connect(capture);
 
+        // 2. WebSocket to the Voice Agent
         const url = new URL("wss://agents.assemblyai.com/v1/ws");
         url.searchParams.set("token", token);
         ws = new WebSocket(url);
-
         let ready = false;
+
+        // mic -> agent (base64 PCM16 inside JSON)
         capture.port.onmessage = ({ data }) => {
-          if (!ready || ws.readyState !== 1) return;
+          if (!ready || !ws || ws.readyState !== 1) return;
           const bytes = new Uint8Array(data);
           let binary = "";
-          for (let i = 0; i < bytes.length; i += 0x8000)
+          for (let i = 0; i < bytes.length; i += 0x8000) {
             binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+          }
           ws.send(JSON.stringify({ type: "input.audio", audio: btoa(binary) }));
         };
 
-        ws.onopen = () => ws.send(JSON.stringify({
-          type: "session.update",
-          session: { agent_id: $("session-info").dataset.agentId }
-        }));
+        ws.onopen = () => {
+          ws.send(JSON.stringify({
+            type: "session.update",
+            session: { agent_id: $("session-info").dataset.agentId }
+          }));
+        };
 
+        // fail-safe: if session.ready never arrives, bail with the real state
         readyTimer = setTimeout(() => {
-          if (!ended && $("end-btn").hidden) {
-            fail("Could not connect to the voice agent. Refresh and try again.");
-            teardown();
+          if (!ended && !sessionReady) {
+            fail("Could not connect to the voice agent (no session.ready). Refresh and try again.");
+            teardown(false);
           }
-        }, 12000);
+        }, 15000);
 
-        ws.onmessage = ({ data }) => {
-          const msg = JSON.parse(data);
+        ws.onmessage = (ev) => {
+          const msg = JSON.parse(ev.data);
           switch (msg.type) {
             case "session.ready":
+              clearTimeout(readyTimer);
               ready = true;
               sessionReady = true;
-              clearTimeout(readyTimer);
-              $("live-indicator").textContent = "Connected — start talking";
               $("live-indicator").hidden = false;
+              $("live-indicator").textContent = "Connected — start talking";
               $("end-btn").hidden = false;
               $("start-btn").hidden = true;
               startTime = Date.now();
               break;
             case "input.speech.started":
-              playback?.port.postMessage("stop");   // barge-in — agent stops mid-word
+              // barge-in: drop queued audio instantly
+              playback?.port.postMessage("stop");
               $("live-indicator").textContent = "Listening...";
               break;
             case "reply.started":
               $("live-indicator").textContent = "Speaking";
+              break;
+            case "reply.done":
+              $("live-indicator").textContent = "Listening...";
+              if (msg.status === "interrupted") playback?.port.postMessage("stop");
               break;
             case "transcript.agent":
               addBubble("agent", msg.text ?? "");
@@ -301,42 +320,55 @@
               playback?.port.postMessage(bytes.buffer, [bytes.buffer]);
               break;
             }
-            case "reply.done":
-              if (msg.status === "interrupted") playback?.port.postMessage("stop");
+            case "session.ended":
+              teardown(true);
               break;
-            case "session.ended":    teardown(); break;
-            case "session.error":    fail(msg.message || "Session error"); break;
+            case "session.error":
+              fail("Agent error: " + (msg.message || "unknown") + (msg.code ? " (code " + msg.code + ")" : ""));
+              teardown(false);
+              break;
           }
         };
-        ws.onclose = () => teardown();
+
+        // show WHY the socket closed instead of a generic message
+        ws.onclose = (ev) => {
+          console.log("ws closed:", ev.code, ev.reason);
+          if (!ended && !sessionReady) {
+            fail("Connection closed before the session started — code " + ev.code + (ev.reason ? ": " + ev.reason : "") + ". Refresh and try again.");
+          }
+          teardown(!ended && sessionReady);
+        };
+        ws.onerror = () => console.log("ws error");
       } catch (ex) {
         fail(ex.message || "Could not start");
         $("start-btn").disabled = false; $("start-btn").textContent = "Start talking";
       }
     }
 
-    function teardown() {
+    function teardown(showNotice) {
+      if (ended) return;
       ended = true;
-      sessionReady = false;
       clearTimeout(readyTimer);
       $("live-indicator").hidden = true;
       $("end-btn").hidden = true;
       $("start-btn").hidden = true;
       $("eval-btn").hidden = false;
-      notice("Session ended. Click 'Get my report' to see your grades.");
-      mic?.getTracks().forEach(t => t.stop()); mic = null;
-      captureCtx?.close(); playbackCtx?.close();
-      captureCtx = playbackCtx = playback = capture = null;
-      ws?.close(); ws = null;
+      if (showNotice) notice("Session ended. Click 'Get my report' to see your grades.");
+      if (mic) { mic.getTracks().forEach(t => t.stop()); mic = null; }
+      if (captureCtx) { captureCtx.close().catch(() => {}); captureCtx = null; }
+      if (playbackCtx) { playbackCtx.close().catch(() => {}); playbackCtx = null; }
+      if (playback) playback = null;
+      if (ws) { try { ws.close(); } catch {} ws = null; }
     }
 
     $("start-btn").addEventListener("click", start);
     $("end-btn").addEventListener("click", async () => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
+      if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({ type: "session.end" }));
-        setTimeout(() => { if (ws?.readyState === 1) ws.close(); }, 3000);
+        const socket = ws;
+        setTimeout(() => { if (socket.readyState === 1) socket.close(); }, 3000);
       }
-      teardown();
+      teardown(true);
       try {
         await API.endSession(sessionId, {
           status: "completed",
@@ -355,6 +387,7 @@
       }
     });
 
+    // load session info + prior transcript
     (async () => {
       const sessions = await fetch(`/api/v1/session/`, { headers: API.headers() }).then(r => r.json());
       const s = (sessions.results || []).find(x => x.id == sessionId);
