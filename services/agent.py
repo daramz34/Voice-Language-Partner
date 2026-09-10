@@ -131,9 +131,10 @@ def build_agent_config(session: PracticeSession) -> dict:
         mode_prompt = f"You are {role} at {place}. Stay in character the whole time. Start with a greeting."
     elif mode == "tutor":
         mode_prompt = (
-            "Act as a patient language tutor. Correct mistakes briefly after the learner "
-            "finishes their thought. Be encouraging."
+            "Act as a patient, encouraging tutor. After the learner finishes a thought, "
+            "first say something positive, then give ONE brief correction in simple terms."
         )
+
     elif mode == "vocabulary":
         words = (session.topic or "common everyday vocabulary").strip()
         mode_prompt = (
@@ -145,11 +146,20 @@ def build_agent_config(session: PracticeSession) -> dict:
 
     # ----- DIFFICULTY OVERLAY -----
     if level == "beginner":
-        level_prompt = "Use simple sentences. Speak slowly. Be encouraging. Ask one short question at a time."
+        level_prompt = (
+            "Use very simple sentences. Speak slowly and clearly. Be extremely encouraging — "
+            "celebrate small wins ('perfect!', 'nice job!'). Ask one short question at a time."
+        )
     elif level == "advanced":
-        level_prompt = "Speak naturally. Use idioms where natural. Do not oversimplify."
+        level_prompt = (
+            "Speak naturally with idioms where natural. Treat them as a near-equal speaker. "
+            "Keep the energy of a fun conversation, not a lesson."
+        )
     else:  # intermediate
-        level_prompt = "Use a natural pace. Allow some complexity. Correct only when it affects meaning."
+        level_prompt = (
+            "Use a natural pace. Allow some complexity. Correct only when it affects meaning, "
+            "and always pair corrections with encouragement."
+        )
 
     # ----- LANGUAGE OVERLAY -----
     if conversation_config == "support_target":
@@ -169,13 +179,15 @@ def build_agent_config(session: PracticeSession) -> dict:
         )
 
     system_prompt = " ".join([
-        f"You are a {agent_lang} conversation partner helping someone practice {target_lang}.",
+        f"You are a friendly {agent_lang} conversation partner helping someone practice {target_lang}.",
         f"The learner is at {level} proficiency.",
         mode_prompt,
         lang_prompt,
         level_prompt,
-        "Keep replies short and spoken-style. Never use lists, bullet points, or markdown.",
+        "Be warm and encouraging: praise what they did well before correcting anything.",
+        "Keep replies short and spoken-style, like a real chat between friends. Never use lists, bullet points, or markdown.",
         "Ask at most one question at a time.",
+        "Speak at a natural, relaxed pace — never rushed.",
     ])
 
     return {

@@ -3,3 +3,4 @@ node_modules/
 agents/*.env
 .venv/
 *.pyc
+admin_view.py

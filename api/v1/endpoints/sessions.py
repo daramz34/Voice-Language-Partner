@@ -1,12 +1,12 @@
 from fastapi import APIRouter, status, Depends, HTTPException, Query
 from schemas import SessionCreate, SessionResponse, MessageIn, EvaluationResponse,SessionUpdate, PaginatedResponse, MessageCreate, MessageResponse
-from crud import create_session, get_my_sessions, get_session_by_id, update_session, save_message, get_session_transcript,get_session_evaluation, create_evaluation,save_mistakes
+from crud import create_session, get_my_mistakes,get_progress_by_language, get_my_sessions, get_session_by_id, update_session, save_message, get_session_transcript,get_session_evaluation, create_evaluation,save_mistakes
 from database import get_db
 from sqlalchemy.orm import Session
 from models import User
 from core.dependencies import get_current_user
 from services.agent import build_agent_config
-from services.gemini import evaluate_session
+from services.gemini import evaluate_session, generate_recommendations
 import json
 import urllib.request
 from core.config import settings
@@ -142,3 +142,40 @@ def evaluate_session_route(session_id: int, db: Session = Depends(get_db),curren
         save_mistakes(db, session_id, current_user.id, result["mistakes"])
 
     return evaluation
+
+@router.get("/{session_id}/evaluate", response_model=EvaluationResponse)
+def get_evaluation_route(session_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user),):
+    evaluation = get_session_evaluation(db, session_id, current_user)
+    if not evaluation:
+        raise HTTPException(status_code=404, detail="Not evaluated yet")
+    return evaluation
+
+@router.get("/{session_id}/recommendation")
+def session_recommendation_route(session_id: int,db: Session = Depends(get_db),current_user: User = Depends(get_current_user),):
+    db_session = get_session_by_id(db, session_id, current_user)
+    if not db_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    mistakes = get_my_mistakes(db, current_user, language=db_session.target_language)
+    progress = get_progress_by_language(db, current_user, db_session.target_language)
+
+    progress_dict = {}
+    if progress:
+        progress_dict = {
+            "avg_overall_score": progress.avg_overall_score,
+            "avg_grammar_score": progress.avg_grammar_score,
+            "avg_vocabulary_score": progress.avg_vocabulary_score,
+            "best_score": progress.best_score,
+        }
+
+    mistake_dicts = [
+        {
+            "mistake_type": m.mistake_type.value if hasattr(m.mistake_type, "value") else str(m.mistake_type),
+            "original_text": m.original_text,
+            "corrected_text": m.corrected_text,
+        }
+        for m in mistakes
+    ]
+
+    return {"recommendation": generate_recommendations(mistake_dicts, progress_dict)}
+

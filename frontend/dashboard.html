@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard — Voice Language Partner</title>
+  <script>document.documentElement.setAttribute("data-theme", localStorage.getItem("theme") || "light");</script>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="/"><span class="brand-mark"><i></i><i></i><i></i></span>Voice Language Partner</a>
+      <nav class="nav-links">
+        <a href="/dashboard.html" style="font-weight:700; color:var(--brand);">Dashboard</a>
+        <button id="theme-toggle" class="icon-btn" aria-label="Toggle dark mode">
+          <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        </button>
+        <a href="/setup.html" class="btn btn-primary" style="padding:9px 18px;">New session</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="container">
+      <h1 style="font-size:28px; letter-spacing:-0.02em;">Your practice</h1>
+      <p class="muted" style="margin-bottom:28px;">Every session, graded.</p>
+
+      <!-- progress cards per language -->
+      <div class="dash-grid" id="progress-cards"></div>
+
+      <!-- session history -->
+      <h2 style="font-size:20px; margin:36px 0 14px;">Session history</h2>
+      <div class="demo-card">
+        <table class="dash-table" id="sessions-table">
+          <thead>
+            <tr><th>Session</th><th>Language</th><th>Mode</th><th>When</th><th>Status</th><th>Score</th><th></th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- recent mistakes -->
+      <h2 style="font-size:20px; margin:36px 0 14px;">Recent mistakes</h2>
+      <div class="demo-card">
+        <div class="demo-body" id="mistakes" style="min-height:0;"></div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/js/theme.js"></script>
+  <script src="/js/api.js"></script>
+  <script>
+    if (!API.token) window.location.href = "/auth.html";
+    const $ = (id) => document.getElementById(id);
+
+    function when(dateStr) {
+      return new Date(dateStr).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    }
+    function scoreColor(s) {
+      return s >= 80 ? "var(--green)" : s >= 50 ? "var(--highlight, #d97706)" : "var(--danger)";
+    }
+    function scoreColor(s) {
+      return s >= 80 ? "var(--green)" : s >= 50 ? "var(--highlight, #d97706)" : "var(--danger)";
+    }
+    function pretty(s) { return (s || "").replace(/_/g, " "); }   // ← ADD HERE
+
+
+    (async () => {
+      // --- progress per language ---
+      const progress = await fetch("/api/v1/progress/", { headers: API.headers() }).then(r => r.json());
+      $("progress-cards").innerHTML = progress.length ? progress.map(p => `
+        <div class="dash-card">
+          <div class="dash-card-head">
+            <span>${p.target_language}</span>
+            <b style="color:${scoreColor(p.avg_overall_score)}">${Math.round(p.avg_overall_score)}</b>
+          </div>
+          <div class="dash-stat"><span>Sessions</span><b>${p.sessions_count}</b></div>
+          <div class="dash-stat"><span>Best score</span><b>${Math.round(p.best_score)}</b></div>
+          <div class="dash-stat"><span>Streak</span><b>${p.current_streak} day${p.current_streak === 1 ? "" : "s"}</b></div>
+          <div class="bar" style="margin-top:12px;"><i style="width:${p.avg_overall_score}%"></i></div>
+        </div>`).join("")
+        : `<p class="muted">No sessions yet — <a href="/setup.html">start your first one</a>.</p>`;
+
+      // --- session history with scores ---
+      const data = await fetch("/api/v1/session/?limit=20", { headers: API.headers() }).then(r => r.json());
+      const sessions = data.results || [];
+      const tbody = $("sessions-table").querySelector("tbody");
+
+      const rows = await Promise.all(sessions.map(async (s) => {
+        let score = "—";
+        if (s.status === "completed") {
+          try {
+            const ev = await fetch(`/api/v1/session/${s.id}/evaluate`, { headers: API.headers() }).then(r => r.json());
+            if (ev && ev.overall_score !== undefined) {
+              score = `<b style="color:${scoreColor(ev.overall_score)}">${Math.round(ev.overall_score)}</b>`;
+            }
+          } catch {}
+        }
+        return `<tr>
+          <td>#${s.id}</td>
+          <td style="text-transform:capitalize">${s.target_language}</td>
+          <td>${pretty(s.practice_mode)}</td>
+          <td class="muted">${when(s.started_at)}</td>
+          <td><span class="status-chip ${s.status}">${pretty(s.status)}</span></td>
+          <td>${score}</td>
+          <td><a href="/report.html?id=${s.id}">View</a></td>
+        </tr>`;
+
+      }));
+      tbody.innerHTML = rows.join("") || `<tr><td colspan="7" class="muted">No sessions yet.</td></tr>`;
+
+      // --- recent mistakes ---
+      const mistakes = await fetch("/api/v1/mistake/", { headers: API.headers() }).then(r => r.json());
+      $("mistakes").innerHTML = mistakes.length
+        ? mistakes.slice(0, 8).map(m => `
+            <div class="score-tip">
+              <b>${m.original_text}</b> → ${m.corrected_text}
+              <span class="muted">(${m.mistake_type}) ${m.explanation || ""}</span>
+            </div>`).join("")
+        : `<p class="muted">No mistakes recorded yet.</p>`;
+    })();
+  </script>
+</body>
+</html>

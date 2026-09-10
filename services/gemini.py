@@ -1,4 +1,5 @@
-from typing import Dict, List, Optional
+import time
+from typing import List, Optional
 
 from google import genai
 from google.genai import types
@@ -17,12 +18,12 @@ class _Mistake(BaseModel):
     corrected: str = ""
     type: str = "grammar"
     explanation: str = ""
+
 class _Feedback(BaseModel):
     """Fixed keys — free Gemini API can't handle free-form dicts in schemas."""
     grammar: str = ""
     vocabulary: str = ""
     fluency: str = ""
-
 
 class _EvaluationResult(BaseModel):
     overall_score: float = 0
@@ -33,10 +34,8 @@ class _EvaluationResult(BaseModel):
     pronunciation_score: Optional[float] = None
     target_language_percentage: float = 0.0
     mistakes: List[_Mistake] = Field(default_factory=list)
-    feedback: _Feedback = Field(default_factory=_Feedback)   # ← was Dict[str, str]
+    feedback: _Feedback = Field(default_factory=_Feedback)
     recommendations: str = ""
-
-
 
 
 # ---------- helpers ----------
@@ -84,21 +83,32 @@ def evaluate_session(
         - Score every category 0-100.
         - pronunciation_score must be null — you only see text, not audio.
         - target_language_percentage = what % of the learner's words were in the target language.
-        - mistakes must be real errors the learner made. Use type = grammar, vocabulary, fluency, comprehension, or pronunciation.
+        - mistakes must be real errors the learner made. Use type = grammar, vocabulary, or fluency only.
         - feedback: short 1-2 sentence comments per category.
         - recommendations: one specific next practice suggestion.
 
         Return JSON exactly matching the required schema."""
 
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=_EvaluationResult,
-            temperature=0.2,
-        ),
-    )
+    # Retry — absorbs transient network blips (SSL EOF, timeouts)
+    last_err = None
+    response = None
+    for attempt in range(3):
+        try:
+            response = client.models.generate_content(
+                model=MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=_EvaluationResult,
+                    temperature=0.2,
+                ),
+            )
+            break
+        except Exception as e:
+            last_err = e
+            time.sleep(1.5 * (attempt + 1))   # 1.5s, 3s, 4.5s backoff
+    if response is None:
+        raise RuntimeError(f"Gemini call failed after 3 attempts: {last_err}")
 
     parsed = _EvaluationResult.model_validate_json(response.text)
 

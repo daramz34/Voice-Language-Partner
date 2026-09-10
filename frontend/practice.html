@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Practice — Voice Language Partner</title>
+  <script>document.documentElement.setAttribute("data-theme", localStorage.getItem("theme") || "light");</script>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="/"><span class="brand-mark"><i></i><i></i><i></i></span>Voice Language Partner</a>
+      <nav class="nav-links">
+        <a href="/dashboard.html">Dashboard</a>
+        <button id="theme-toggle" class="icon-btn" aria-label="Toggle dark mode">
+          <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="practice-wrap">
+      <div class="practice-status">
+        <div>
+          <strong id="session-label">Session</strong>
+          <span class="muted" id="session-info" style="margin-left:8px;"></span>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-primary" id="start-btn">Start talking</button>
+          <button class="btn btn-ghost" id="end-btn" hidden>End session</button>
+          <button class="btn btn-primary" id="eval-btn" hidden>Get my report</button>
+        </div>
+      </div>
+      <div class="live-dot" id="live-indicator" hidden>Speaking</div>
+      <p class="muted" id="practice-hint" style="margin-top:8px; font-size:13px;">Speak out loud in your target language — the agent listens continuously.</p>
+      <div class="demo-card">
+        <div class="demo-body" id="transcript" style="min-height:320px;">
+          <p class="muted" style="text-align:center; margin:auto;">Press "Start talking" and grant microphone access. Your conversation appears here.</p>
+        </div>
+      </div>
+      <p class="form-error" id="practice-error" hidden style="margin-top:12px;"></p>
+    </div>
+  </main>
+
+  <script src="/js/theme.js"></script>
+  <script src="/js/api.js"></script>
+  <script>
+    if (!API.token) window.location.href = "/auth.html";
+    const $ = (id) => document.getElementById(id);
+    const sessionId = new URLSearchParams(window.location.search).get("id");
+    if (!sessionId) window.location.href = "/setup.html";
+
+    let sessionLanguage = "spanish";   // set from the session record below
+    let lastAgentText = "";            // greeting dedupe
+
+    const transcript = $("transcript");
+    function addBubble(who, text) {
+      const p = transcript.querySelector("p"); if (p) p.remove();
+      const b = document.createElement("div");
+      b.className = "bubble " + who;
+      b.innerHTML = `<span class="tag">${who === "agent" ? "Partner" : "You"}</span>`;
+      b.appendChild(document.createTextNode(text));
+      transcript.appendChild(b);
+      transcript.scrollTop = transcript.scrollHeight;
+    }
+
+    function fail(msg) {
+      const e = $("practice-error");
+      e.textContent = msg; e.hidden = false;
+      e.style.background = ""; e.style.color = "";
+    }
+    function notice(msg) {
+      const e = $("practice-error");
+      e.textContent = msg; e.hidden = false;
+      e.style.background = "#e7f5ec"; e.style.color = "#1e7e34";
+    }
+
+    let ws, captureCtx, playbackCtx, playback, capture, mic, ended = false;
+    let startTime = Date.now();
+    let readyTimer = null;
+    let sessionReady = false;
+    const WIRE_RATE = 24000;
+
+    // Worklets from the official starter — capture resamples mic to 24kHz
+    // PCM16; playback is a ring buffer that resamples 24k to hardware rate.
+    const CAPTURE_WORKLET = `
+      class CaptureProcessor extends AudioWorkletProcessor {
+        constructor() {
+          super();
+          this._ratio = sampleRate / ${WIRE_RATE};
+          this._pos = 0;
+          this._prev = 0;
+          this._src = null;
+          this._out = null;
+        }
+        _toPcm(samples, len) {
+          const pcm = new Int16Array(len);
+          for (let i = 0; i < len; i++) {
+            const s = Math.max(-1, Math.min(1, samples[i]));
+            pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          }
+          return pcm;
+        }
+        process(inputs) {
+          const ch = inputs[0]?.[0];
+          if (!ch) return true;
+          if (this._ratio === 1) {
+            const pcm = this._toPcm(ch, ch.length);
+            this.port.postMessage(pcm.buffer, [pcm.buffer]);
+            return true;
+          }
+          const n = ch.length;
+          if (!this._src || this._src.length < n + 1) {
+            this._src = new Float32Array(n + 1);
+            this._out = new Float32Array(Math.ceil((n + 1) / this._ratio) + 2);
+          }
+          const src = this._src;
+          const out = this._out;
+          src[0] = this._prev;
+          src.set(ch, 1);
+          let outLen = 0;
+          let pos = this._pos;
+          while (pos < n) {
+            const i = Math.floor(pos);
+            const frac = pos - i;
+            out[outLen++] = src[i] + (src[i + 1] - src[i]) * frac;
+            pos += this._ratio;
+          }
+          this._pos = pos - n;
+          this._prev = ch[n - 1];
+          if (outLen) {
+            const pcm = this._toPcm(out, outLen);
+            this.port.postMessage(pcm.buffer, [pcm.buffer]);
+          }
+          return true;
+        }
+      }
+      registerProcessor('capture', CaptureProcessor);
+    `;
+
+    const PLAYBACK_WORKLET = `
+      class PlaybackProcessor extends AudioWorkletProcessor {
+        constructor() {
+          super();
+          this._ring = new Float32Array(sampleRate * 30);
+          this._writePos = 0;
+          this._readPos = 0;
+          this._available = 0;
+          this._step = ${WIRE_RATE} / sampleRate;
+          this._rsPos = 0;
+          this._rsPrev = 0;
+          this._drained = false;
+          this.port.onmessage = (e) => {
+            if (e.data === 'stop') {
+              this._writePos = this._readPos = this._available = 0;
+              this._rsPos = this._rsPrev = 0;
+              return;
+            }
+            const int16 = new Int16Array(e.data);
+            if (!int16.length) return;
+            if (this._drained) {
+              this._rsPrev = 0;
+              this._rsPos = 0;
+              this._drained = false;
+            }
+            if (this._step === 1) {
+              for (let i = 0; i < int16.length; i++) this._push(int16[i] / 32768);
+              return;
+            }
+            const n = int16.length;
+            let pos = this._rsPos;
+            while (pos < n) {
+              const i = Math.floor(pos);
+              const frac = pos - i;
+              const a = i === 0 ? this._rsPrev : int16[i - 1] / 32768;
+              const b = int16[i] / 32768;
+              this._push(a + (b - a) * frac);
+              pos += this._step;
+            }
+            this._rsPos = pos - n;
+            this._rsPrev = int16[n - 1] / 32768;
+          };
+        }
+        _push(v) {
+          if (this._available < this._ring.length) {
+            this._ring[this._writePos] = v;
+            this._writePos = (this._writePos + 1) % this._ring.length;
+            this._available++;
+          }
+        }
+        process(inputs, outputs) {
+          const out = outputs[0][0];
+          const cap = this._ring.length;
+          for (let i = 0; i < out.length; i++) {
+            if (this._available > 0) {
+              out[i] = this._ring[this._readPos];
+              this._readPos = (this._readPos + 1) % cap;
+              this._available--;
+            } else {
+              out[i] = 0;
+              this._drained = true;
+            }
+          }
+          for (let ch = 1; ch < outputs[0].length; ch++) outputs[0][ch].set(out);
+          return true;
+        }
+      }
+      registerProcessor('playback', PlaybackProcessor);
+    `;
+
+    async function addWorklet(ctx, code, name) {
+      const url = URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
+      try { await ctx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
+      return new AudioWorkletNode(ctx, name);
+    }
+
+    async function start() {
+      try {
+        $("start-btn").disabled = true; $("start-btn").textContent = "Connecting...";
+        $("practice-error").hidden = true;
+
+        const { token } = await API.voiceToken();
+        mic = await navigator.mediaDevices.getUserMedia({
+          audio: { channelCount: 1, echoCancellation: true, noiseSuppression: false, autoGainControl: false }
+        });
+
+        captureCtx = new AudioContext({ sampleRate: WIRE_RATE });
+        playbackCtx = new AudioContext({ sampleRate: WIRE_RATE });
+        await Promise.all([captureCtx.resume(), playbackCtx.resume()]);
+
+        playback = await addWorklet(playbackCtx, PLAYBACK_WORKLET, "playback");
+        playback.connect(playbackCtx.destination);
+
+        capture = await addWorklet(captureCtx, CAPTURE_WORKLET, "capture");
+        captureCtx.createMediaStreamSource(mic).connect(capture);
+
+        const url = new URL("wss://agents.assemblyai.com/v1/ws");
+        url.searchParams.set("token", token);
+        ws = new WebSocket(url);
+
+        let ready = false;
+        capture.port.onmessage = ({ data }) => {
+          if (!ready || ws.readyState !== 1) return;
+          const bytes = new Uint8Array(data);
+          let binary = "";
+          for (let i = 0; i < bytes.length; i += 0x8000)
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+          ws.send(JSON.stringify({ type: "input.audio", audio: btoa(binary) }));
+        };
+
+        ws.onopen = () => ws.send(JSON.stringify({
+          type: "session.update",
+          session: { agent_id: $("session-info").dataset.agentId }
+        }));
+
+        readyTimer = setTimeout(() => {
+          if (!ended && $("end-btn").hidden) {
+            fail("Could not connect to the voice agent. Refresh and try again.");
+            teardown();
+          }
+        }, 12000);
+
+        ws.onmessage = ({ data }) => {
+          const msg = JSON.parse(data);
+          switch (msg.type) {
+            case "session.ready":
+              ready = true;
+              sessionReady = true;
+              clearTimeout(readyTimer);
+              $("live-indicator").textContent = "Connected — start talking";
+              $("live-indicator").hidden = false;
+              $("end-btn").hidden = false;
+              $("start-btn").hidden = true;
+              startTime = Date.now();
+              break;
+            case "input.speech.started":
+              playback?.port.postMessage("stop");   // barge-in — agent stops mid-word
+              $("live-indicator").textContent = "Listening...";
+              break;
+            case "reply.started":
+              $("live-indicator").textContent = "Speaking";
+              break;
+            case "transcript.agent":
+              addBubble("agent", msg.text ?? "");
+              if (msg.text && msg.text !== lastAgentText) {
+                API.saveMessage(sessionId, "agent", msg.text, sessionLanguage);
+                lastAgentText = msg.text;
+              }
+              break;
+            case "transcript.user":
+              addBubble("user", msg.text ?? "");
+              if (msg.text) API.saveMessage(sessionId, "user", msg.text, sessionLanguage);
+              break;
+            case "reply.audio": {
+              const raw = atob(msg.data);
+              const bytes = new Uint8Array(raw.length);
+              for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+              playback?.port.postMessage(bytes.buffer, [bytes.buffer]);
+              break;
+            }
+            case "reply.done":
+              if (msg.status === "interrupted") playback?.port.postMessage("stop");
+              break;
+            case "session.ended":    teardown(); break;
+            case "session.error":    fail(msg.message || "Session error"); break;
+          }
+        };
+        ws.onclose = () => teardown();
+      } catch (ex) {
+        fail(ex.message || "Could not start");
+        $("start-btn").disabled = false; $("start-btn").textContent = "Start talking";
+      }
+    }
+
+    function teardown() {
+      ended = true;
+      sessionReady = false;
+      clearTimeout(readyTimer);
+      $("live-indicator").hidden = true;
+      $("end-btn").hidden = true;
+      $("start-btn").hidden = true;
+      $("eval-btn").hidden = false;
+      notice("Session ended. Click 'Get my report' to see your grades.");
+      mic?.getTracks().forEach(t => t.stop()); mic = null;
+      captureCtx?.close(); playbackCtx?.close();
+      captureCtx = playbackCtx = playback = capture = null;
+      ws?.close(); ws = null;
+    }
+
+    $("start-btn").addEventListener("click", start);
+    $("end-btn").addEventListener("click", async () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "session.end" }));
+        setTimeout(() => { if (ws?.readyState === 1) ws.close(); }, 3000);
+      }
+      teardown();
+      try {
+        await API.endSession(sessionId, {
+          status: "completed",
+          ended_at: new Date().toISOString(),
+          duration_seconds: Math.round((Date.now() - startTime) / 1000),
+        });
+      } catch {}
+    });
+    $("eval-btn").addEventListener("click", async () => {
+      $("eval-btn").disabled = true; $("eval-btn").textContent = "Grading...";
+      try {
+        await API.evaluate(sessionId);
+        window.location.href = `/report.html?id=${sessionId}`;
+      } catch (ex) {
+        fail(ex.message); $("eval-btn").disabled = false; $("eval-btn").textContent = "Get my report";
+      }
+    });
+
+    (async () => {
+      const sessions = await fetch(`/api/v1/session/`, { headers: API.headers() }).then(r => r.json());
+      const s = (sessions.results || []).find(x => x.id == sessionId);
+      if (s) {
+        $("session-info").textContent = `${s.target_language} · ${s.practice_mode} · ${s.proficiency_level}`;
+        $("session-info").dataset.agentId = s.assemblyai_agent_id || "";
+        $("session-label").textContent = `Session #${s.id}`;
+        sessionLanguage = s.target_language;
+        $("practice-hint").textContent = `Speak out loud in ${s.target_language} — the agent listens continuously.`;
+      }
+      const t = await API.getTranscript(sessionId);
+      t.forEach(m => addBubble(m.speaker === "agent" ? "agent" : "user", m.content));
+    })();
+  </script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-
+from fastapi.staticfiles import StaticFiles
 from database import engine, get_db, Base
 import models  
 from core.security import settings
@@ -20,7 +20,7 @@ Base.metadata.create_all(bind=engine)
 
 app.include_router(api_router, prefix="/api/v1")
 
-
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
 @app.get("/")
 def root():
     return {"message": "Voice Language Partner API", "docs": "/docs"}

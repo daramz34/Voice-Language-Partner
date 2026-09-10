@@ -162,7 +162,8 @@ def create_evaluation(db: Session,session_id: int,evaluation_data: dict, current
 
 
 def _coerce_mistake_type(value):
-    """Turn 'grammar', 'GRAMMAR', or enum member into a proper MistakeType."""
+    """Turn 'grammar', 'GRAMMAR', or an enum member into a proper Mistake_Type.
+    Unknown types fall back to grammar instead of crashing the evaluation."""
     if isinstance(value, enums.Mistake_Type):
         return value
 
@@ -171,8 +172,7 @@ def _coerce_mistake_type(value):
         if member.value == value_str or member.name == value_str.upper():
             return member
 
-    raise ValueError(f"Invalid mistake type: {value}")
-
+    return enums.Mistake_Type.grammar   # safe fallback — adjust if your member is spelled differently
 
 def save_mistakes(db: Session,session_id: int,user_id: int, mistakes: list[dict]) -> list[Mistake]:
     rows = [
