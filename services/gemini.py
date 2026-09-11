@@ -1,5 +1,6 @@
+import random
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from google import genai
 from google.genai import types
@@ -48,6 +49,27 @@ def _clamp(value) -> float:
         return 0.0
 
 
+def _call_gemini(prompt: str, schema=None):
+    """Call Gemini with 5 retries + exponential backoff + jitter.
+    Survives flaky networks (SSL EOF, timeouts) that kill single attempts."""
+    last_err = None
+    for attempt in range(5):
+        try:
+            return client.models.generate_content(
+                model=MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=schema,
+                    temperature=0.2,
+                ),
+            )
+        except Exception as e:
+            last_err = e
+            time.sleep((2 ** attempt) + random.random())  # ~1s, 2s, 4s, 8s, 16s
+    raise RuntimeError(f"Gemini call failed after 5 attempts: {last_err}")
+
+
 # ---------- public API ----------
 
 def evaluate_session(
@@ -89,27 +111,7 @@ def evaluate_session(
 
         Return JSON exactly matching the required schema."""
 
-    # Retry — absorbs transient network blips (SSL EOF, timeouts)
-    last_err = None
-    response = None
-    for attempt in range(3):
-        try:
-            response = client.models.generate_content(
-                model=MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=_EvaluationResult,
-                    temperature=0.2,
-                ),
-            )
-            break
-        except Exception as e:
-            last_err = e
-            time.sleep(1.5 * (attempt + 1))   # 1.5s, 3s, 4.5s backoff
-    if response is None:
-        raise RuntimeError(f"Gemini call failed after 3 attempts: {last_err}")
-
+    response = _call_gemini(prompt, schema=_EvaluationResult)
     parsed = _EvaluationResult.model_validate_json(response.text)
 
     # Normalize to exactly what crud.py / models.py expect.
@@ -161,5 +163,5 @@ Their progress so far:
 
 Look for recurring weaknesses. Give ONE specific, actionable next practice suggestion in 2-3 plain sentences. Do not use markdown, bullets, or headers."""
 
-    response = client.models.generate_content(model=MODEL, contents=prompt)
+    response = _call_gemini(prompt)   # plain text call, same retry protection
     return response.text.strip()
