@@ -22,9 +22,11 @@
     <div class="auth-wrap">
       <div class="auth-card">
         <h1 style="font-size:24px; letter-spacing:-0.02em;">Welcome back</h1>
-        <p class="muted" style="margin-bottom:24px;">Sign in to keep practicing.</p>
+        <p class="muted" style="margin-bottom:20px;">Sign in to keep practicing.</p>
 
-        <!-- shown instead of instant redirect when a token already exists -->
+        <p class="form-error" id="expired-note" hidden style="margin-bottom:16px;">Your session expired — please sign in again.</p>
+
+        <!-- shown when a token already exists -->
         <div id="already-in" hidden style="margin-bottom:20px;">
           <p style="margin-bottom:12px;">You're already signed in.</p>
           <div style="display:flex; gap:8px;">
@@ -33,7 +35,7 @@
           </div>
         </div>
 
-        <div class="tabs" style="display:flex; gap:16px; margin-bottom:16px;">
+        <div style="display:flex; gap:8px; margin-bottom:16px;" id="tabs">
           <button type="button" id="tab-login" class="btn btn-primary" style="flex:1;">Login</button>
           <button type="button" id="tab-register" class="btn btn-ghost" style="flex:1;">Register</button>
         </div>
@@ -41,10 +43,12 @@
         <form id="auth-form">
           <label class="field" id="username-field" hidden><span>Username</span>
             <input type="text" name="username" autocomplete="username"></label>
-          <label class="field"><span>Email</span>
-            <input type="email" name="email" autocomplete="email" required></label>
+          <label class="field" id="email-field" hidden><span>Email</span>
+            <input type="email" name="email" autocomplete="email"></label>
+          <label class="field"><span id="pw-label">Username</span>
+            <input type="text" name="login_username" id="login-username" autocomplete="username"></label>
           <label class="field"><span>Password</span>
-            <input type="password" name="password" autocomplete="current-password" required></label>
+            <input type="password" name="password" id="password" autocomplete="current-password" required></label>
           <p class="form-error" id="auth-error" hidden></p>
           <button type="submit" class="btn btn-primary btn-block" id="auth-btn">Login</button>
         </form>
@@ -56,19 +60,21 @@
   <script src="/js/api.js"></script>
   <script>
     const $ = (id) => document.getElementById(id);
-    const TOKEN_KEY = "token";   // ← KEY: must match what api.js reads
+
+    // session-expired notice (set by api.js on 401)
+    if (new URLSearchParams(location.search).get("expired")) $("expired-note").hidden = false;
 
     let mode = "login";
 
-    // If a token already exists: DON'T auto-redirect. Show options instead.
+    // Already signed in? Show options instead of auto-redirect.
     if (API.token) {
       $("already-in").hidden = false;
       $("auth-form").hidden = true;
-      document.querySelector(".tabs").hidden = true;
+      $("tabs").hidden = true;
     }
 
     $("logout-btn").addEventListener("click", () => {
-      localStorage.removeItem(TOKEN_KEY);
+      API.clearToken();
       location.reload();
     });
 
@@ -79,42 +85,55 @@
       mode = m;
       $("tab-login").className = "btn " + (m === "login" ? "btn-primary" : "btn-ghost");
       $("tab-register").className = "btn " + (m === "register" ? "btn-primary" : "btn-ghost");
+      // register shows username + email; login asks for username only
       $("username-field").hidden = m !== "register";
+      $("email-field").hidden = m !== "register";
+      $("login-username").closest(".field").hidden = m !== "login";
+      $("pw-label").textContent = m === "login" ? "Username" : "Password";
+      // move the password label properly: in register mode the standalone
+      // username row hides, and password stays last
       $("auth-btn").textContent = m === "login" ? "Login" : "Create account";
-      $("auth-btn").setAttribute("autocomplete", m === "login" ? "current-password" : "new-password");
+      $("password").setAttribute("autocomplete", m === "login" ? "current-password" : "new-password");
+      $("auth-error").hidden = true;
+    }
+    setMode("login");
+
+    function showErr(msg) {
+      const e = $("auth-error");
+      e.textContent = msg; e.hidden = false;
     }
 
     $("auth-form").addEventListener("submit", async (e) => {
       e.preventDefault();
-      const err = $("auth-error"), btn = $("auth-btn");
-      err.hidden = true; btn.disabled = true; btn.textContent = "Please wait...";
+      const btn = $("auth-btn");
+      $("auth-error").hidden = true;
+      btn.disabled = true;
       const f = new FormData(e.target);
 
       try {
         if (mode === "register") {
-          const res = await fetch("/api/v1/auth/register", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              username: f.get("username"),
-              email: f.get("email"),
-              password: f.get("password"),
-            }),
+          btn.textContent = "Creating account...";
+          // native_language defaulted — your schema expects it
+          await API.register({
+            username: (f.get("username") || "").trim(),
+            email: (f.get("email") || "").trim(),
+            password: f.get("password"),
+            native_language: "english",
           });
-          if (!res.ok) throw new Error((await res.json()).detail || "Registration failed");
         }
-        const res = await fetch("/api/v1/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: f.get("email"), password: f.get("password") }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "Login failed");
-        localStorage.setItem(TOKEN_KEY, data.access_token);   // ← KEY: match api.js
-        window.location.href = "/dashboard.html";
+
+        btn.textContent = "Signing in...";
+        await API.login((f.get("login_username") || f.get("username") || "").trim(), f.get("password"));
+
+        // success feedback, then straight to the dashboard
+        btn.textContent = "✓ Signed in — opening dashboard...";
+        setTimeout(() => { window.location.href = "/dashboard.html"; }, 600);
+
       } catch (ex) {
-        err.textContent = ex.message; err.hidden = false;
-        btn.disabled = false; btn.textContent = mode === "login" ? "Login" : "Create account";
+        // api.js already unwraps FastAPI's detail arrays into readable strings
+        showErr(ex.message || "Something went wrong");
+        btn.disabled = false;
+        btn.textContent = mode === "login" ? "Login" : "Create account";
       }
     });
   </script>
