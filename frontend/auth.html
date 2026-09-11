@@ -26,7 +26,6 @@
 
         <p class="form-error" id="expired-note" hidden style="margin-bottom:16px;">Your session expired — please sign in again.</p>
 
-        <!-- shown when a token already exists -->
         <div id="already-in" hidden style="margin-bottom:20px;">
           <p style="margin-bottom:12px;">You're already signed in.</p>
           <div style="display:flex; gap:8px;">
@@ -41,11 +40,13 @@
         </div>
 
         <form id="auth-form">
+          <!-- register-only fields -->
           <label class="field" id="username-field" hidden><span>Username</span>
-            <input type="text" name="username" autocomplete="username"></label>
+            <input type="text" name="reg_username" autocomplete="username"></label>
           <label class="field" id="email-field" hidden><span>Email</span>
             <input type="email" name="email" autocomplete="email"></label>
-          <label class="field"><span id="pw-label">Username</span>
+          <!-- shared fields -->
+          <label class="field" id="login-user-field" hidden><span>Username</span>
             <input type="text" name="login_username" id="login-username" autocomplete="username"></label>
           <label class="field"><span>Password</span>
             <input type="password" name="password" id="password" autocomplete="current-password" required></label>
@@ -61,12 +62,10 @@
   <script>
     const $ = (id) => document.getElementById(id);
 
-    // session-expired notice (set by api.js on 401)
     if (new URLSearchParams(location.search).get("expired")) $("expired-note").hidden = false;
 
     let mode = "login";
 
-    // Already signed in? Show options instead of auto-redirect.
     if (API.token) {
       $("already-in").hidden = false;
       $("auth-form").hidden = true;
@@ -85,13 +84,9 @@
       mode = m;
       $("tab-login").className = "btn " + (m === "login" ? "btn-primary" : "btn-ghost");
       $("tab-register").className = "btn " + (m === "register" ? "btn-primary" : "btn-ghost");
-      // register shows username + email; login asks for username only
       $("username-field").hidden = m !== "register";
       $("email-field").hidden = m !== "register";
-      $("login-username").closest(".field").hidden = m !== "login";
-      $("pw-label").textContent = m === "login" ? "Username" : "Password";
-      // move the password label properly: in register mode the standalone
-      // username row hides, and password stays last
+      $("login-user-field").hidden = m !== "login";
       $("auth-btn").textContent = m === "login" ? "Login" : "Create account";
       $("password").setAttribute("autocomplete", m === "login" ? "current-password" : "new-password");
       $("auth-error").hidden = true;
@@ -102,38 +97,63 @@
       const e = $("auth-error");
       e.textContent = msg; e.hidden = false;
     }
+    function resetBtn() {
+      $("auth-btn").disabled = false;
+      $("auth-btn").textContent = mode === "login" ? "Login" : "Create account";
+    }
 
     $("auth-form").addEventListener("submit", async (e) => {
       e.preventDefault();
-      const btn = $("auth-btn");
       $("auth-error").hidden = true;
-      btn.disabled = true;
+      $("auth-btn").disabled = true;
       const f = new FormData(e.target);
+      const password = f.get("password");
 
       try {
         if (mode === "register") {
-          btn.textContent = "Creating account...";
-          // native_language defaulted — your schema expects it
-          await API.register({
-            username: (f.get("username") || "").trim(),
-            email: (f.get("email") || "").trim(),
-            password: f.get("password"),
-            native_language: "english",
-          });
+          const username = (f.get("reg_username") || "").trim();
+          const email = (f.get("email") || "").trim();
+
+          $("auth-btn").textContent = "Creating account...";
+          try {
+            await API.register({ username, email, password, native_language: "english" });
+          } catch (regErr) {
+            // Common case: username/email already taken → offer login instead
+            showErr("Couldn't create the account (" + regErr.message + "). If it already exists, sign in below.");
+            setMode("login");
+            $("login-username").value = username;
+            $("password").value = password;
+            resetBtn();
+            return;
+          }
+
+          // registered — auto-login
+          $("auth-btn").textContent = "Signed in — opening dashboard...";
+          try {
+            await API.login(username, password);
+            setTimeout(() => { window.location.href = "/dashboard.html"; }, 500);
+            return;
+          } catch {
+            // rare: account created but auto-login hiccuped
+            showErr("Account created! Please sign in.");
+            setMode("login");
+            $("login-username").value = username;
+            $("password").value = "";
+            resetBtn();
+            return;
+          }
         }
 
-        btn.textContent = "Signing in...";
-        await API.login((f.get("login_username") || f.get("username") || "").trim(), f.get("password"));
-
-        // success feedback, then straight to the dashboard
-        btn.textContent = "✓ Signed in — opening dashboard...";
+        // ---- login mode ----
+        const username = (f.get("login_username") || "").trim();
+        $("auth-btn").textContent = "Signing in...";
+        await API.login(username, password);
+        $("auth-btn").textContent = "✓ Signed in — opening dashboard...";
         setTimeout(() => { window.location.href = "/dashboard.html"; }, 600);
 
       } catch (ex) {
-        // api.js already unwraps FastAPI's detail arrays into readable strings
         showErr(ex.message || "Something went wrong");
-        btn.disabled = false;
-        btn.textContent = mode === "login" ? "Login" : "Create account";
+        resetBtn();
       }
     });
   </script>
