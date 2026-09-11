@@ -47,7 +47,9 @@
     const $ = (s) => document.querySelector(s);
 
     // "Practice again" re-enters this same session
-    $("again-btn").href = `/practice.html?id=${id}`;
+    const againBtn = document.getElementById("again-btn");
+    if (againBtn) againBtn.href = `/practice.html?id=${id}`;
+
 
     function row(label, val) {
       return `<div class="score-row"><span>${label}</span>
