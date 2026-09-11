@@ -225,6 +225,10 @@
 
         // 1. token + mic
         const { token } = await API.voiceToken();
+                // fetch inline voice config for THIS session
+        const cfg = await fetch(`/api/v1/session/${sessionId}/agent-config`, { headers: API.headers() })
+          .then(r => { if (!r.ok) throw new Error("Could not load session config"); return r.json(); });
+
         mic = await navigator.mediaDevices.getUserMedia({
           audio: {
             channelCount: 1,
@@ -262,12 +266,16 @@
           ws.send(JSON.stringify({ type: "input.audio", audio: btoa(binary) }));
         };
 
-        ws.onopen = () => {
-          ws.send(JSON.stringify({
-            type: "session.update",
-            session: { agent_id: $("session-info").dataset.agentId }
-          }));
-        };
+        ws.onopen = () => ws.send(JSON.stringify({
+          type: "session.update",
+          session: {
+            system_prompt: cfg.system_prompt,
+            greeting: cfg.greeting,
+            input: cfg.input,
+            output: { voice: cfg.voice.voice_id }   // ws wants a string, not an object
+          }
+        }));
+
 
         // fail-safe: if session.ready never arrives, bail with the real state
         readyTimer = setTimeout(() => {

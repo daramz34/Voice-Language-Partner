@@ -3,7 +3,7 @@ from schemas import SessionCreate, SessionResponse, MessageIn, EvaluationRespons
 from crud import create_session, get_my_mistakes,get_progress_by_language, get_my_sessions, get_session_by_id, update_session, save_message, get_session_transcript,get_session_evaluation, create_evaluation,save_mistakes
 from database import get_db
 from sqlalchemy.orm import Session
-from models import User
+from models import User, PracticeSession
 from core.dependencies import get_current_user
 from services.agent import build_agent_config
 from services.gemini import evaluate_session, generate_recommendations
@@ -41,6 +41,13 @@ def _enum_value(value):
     """Pull the plain value out of a Python enum member."""
     return getattr(value, "value", value)
 
+@router.get("/{session_id}/agent-config")
+def get_agent_config(session_id: int, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Returns the inline voice config for this session's websocket."""
+    db_session = db.query(PracticeSession).filter(PracticeSession.id == session_id).first()
+    if not db_session or db_session.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return build_agent_config(db_session)
 
 @router.post("/", response_model=SessionResponse, status_code=status.HTTP_201_CREATED,description="Create Session")
 def create_session_endpoint(session: SessionCreate, db:Session=Depends(get_db),  current_user: User=Depends(get_current_user)):
