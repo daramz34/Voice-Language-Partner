@@ -230,13 +230,14 @@
           .then(r => { if (!r.ok) throw new Error("Could not load session config"); return r.json(); });
 
         mic = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: false,
-            autoGainControl: false,
-          },
-        });
+            audio: {
+              channelCount: 1,
+              echoCancellation: true,
+              noiseSuppression: true,     // was false
+              autoGainControl: true,      // was false
+            },
+          });
+
 
         // two contexts, both created in the click handler (Safari requirement)
         captureCtx = new AudioContext({ sampleRate: WIRE_RATE });
